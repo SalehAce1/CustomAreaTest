@@ -24,6 +24,14 @@ namespace CustomAreaTest
             return "0.0.0.0";
         }
 
+        public override List<(string, string)> GetPreloadNames()
+        {
+            return new List<(string, string)>
+            {
+                //("GG_Hornet_2","Boss Holder/Hornet Boss 2"),
+            };
+        }
+
         public override void Initialize()
         {
             Instance = this;

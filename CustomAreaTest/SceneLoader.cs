@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Collections.Generic;
 using System.Reflection;
 using System.IO;
 using HutongGames.PlayMaker.Actions;
@@ -7,245 +8,231 @@ using ModCommon.Util;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using Logger = Modding.Logger;
+using Modding;
 using USceneManager = UnityEngine.SceneManagement.SceneManager;
 using System.Linq;
 using GlobalEnums;
+using UnityEngine.Audio;
 
 namespace CustomAreaTest
 {
     internal class SceneLoader : MonoBehaviour
     {
         string sceneName;
-        Rigidbody2D _rb;
+        AssetBundle ab, ab2, ab3, ab4;
+        public static Dictionary<string, AudioClip> clips = new Dictionary<string, AudioClip>();
         HeroController _target;
+
         private IEnumerator Start()
         {
+            On.GameManager.EnterHero += GameManager_EnterHero;
             yield return new WaitWhile(() => !HeroController.instance);
-
-            yield return new WaitWhile(() => !Input.GetKey(KeyCode.T));
-
-            AssetBundle ab = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "texture"));
-            Object[] resources = ab.LoadAllAssets();
-            AssetBundle ab2 = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "scene"));
-            sceneName = ab2.GetAllScenePaths()[0];
-            GameManager unsafeInstance = GameManager.UnsafeInstance;
-            unsafeInstance.BeginSceneTransition(new GameManager.SceneLoadInfo
-            {
-                SceneName = sceneName,
-                EntryGateName = "door1",
-                EntryDelay = 0f,
-                Visualization = GameManager.SceneLoadVisualizations.GrimmDream,
-                PreventCameraFadeOut = false,
-                WaitForSceneTransitionCameraFade = false,
-                AlwaysUnloadUnusedAssets = false
-            });
-            yield return new WaitWhile(() => !GameObject.Find("bg"));
             _target = HeroController.instance;
-            _target.transform.SetPosition2D(14f, 14f);
+        }
+
+        private void CreateGateway(string gateName, Vector2 pos, Vector2 size, string toScene, string entryGate,
+                                   bool right, bool left, bool onlyOut, GameManager.SceneLoadVisualizations vis)
+        {
+            GameObject gate = new GameObject(gateName);
+            gate.transform.SetPosition2D(pos);
+            var tp = gate.AddComponent<TransitionPoint>();
+            if (!onlyOut)
+            {
+                var bc = gate.AddComponent<BoxCollider2D>();
+                bc.size = size;
+                bc.isTrigger = true;
+                tp.targetScene = toScene;
+                tp.entryPoint = entryGate;
+            }
+            tp.alwaysEnterLeft = left;
+            tp.alwaysEnterRight = right;
+            GameObject rm = new GameObject("Hazard Respawn Marker");
+            rm.transform.parent = tp.transform;
+            rm.transform.position = new Vector2(rm.transform.position.x - 3f, rm.transform.position.y);
+            var tmp = rm.AddComponent<HazardRespawnMarker>();
+            tp.respawnMarker = rm.GetComponent<HazardRespawnMarker>();
+            tp.sceneLoadVisualization = vis;
+        }
+
+        private void GameManager_EnterHero(On.GameManager.orig_EnterHero orig, GameManager self, bool additiveGateSearch)
+        {
+            self.UpdateSceneName();
+            if (self.sceneName == "zombie-scene")
+            {
+                foreach (var i in FindObjectsOfType<AudioSource>().Where(x => x.name == "Main")) Destroy(i);
+                sceneName = "zombie-scene";
+                CreateGateway("left test2", new Vector2(42.7f, 3.8f), new Vector2(1f, 4f), 
+                              "GG_Workshop", "left test", false, true, false, GameManager.SceneLoadVisualizations.Default);
+                CreateGateway("right test3", new Vector2(146.8f, 3.8f), new Vector2(2.4f, 5.2f),
+                              "zombie-scene2", "left test3", true, false, true, GameManager.SceneLoadVisualizations.Default);
+                orig(self, false);
+                StartCoroutine(DoorControl());
+                StartCoroutine(CameraControl());
+                return;
+            }
+            else if (self.sceneName == "zombie-scene2")
+            {
+                sceneName = "zombie-scene2";
+                CreateGateway("left test3", new Vector2(89.45f, 4.3f), new Vector2(1f, 4f),
+                              "zombie-scene", "right test3", false, true, false, GameManager.SceneLoadVisualizations.Default);
+                Log("made gateway");
+                orig(self, false);
+                StartCoroutine(CameraControl2());
+                return;
+            }
+            else if (self.sceneName == "GG_Workshop")
+            {
+                if (ab == null)
+                {
+                    ab = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "zombiebundle"));
+                    ab3 = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "zombiebundle2"));
+                    ab2 = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "zombscene"));
+                    ab4 = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "zombscene2"));
+                    GameObject _aud = new GameObject();
+                    var f = _aud.AddComponent<AudioSource>();
+                    f.loop = true;
+                    f.clip = ab.LoadAsset<AudioClip>("audMusic");
+                    _aud.AddComponent<MusicControl>();
+                    DontDestroyOnLoad(_aud);
+                    foreach (AudioClip i in ab.LoadAllAssets<AudioClip>())
+                    {
+                        clips.Add(i.name, i);
+                    }
+                }
+                sceneName = "GG_Workshop";
+                CreateGateway("left test", new Vector2(7.6f, 36.4f), new Vector2(1f, 4f),
+                              "zombie-scene", "left test2", false, true, false, GameManager.SceneLoadVisualizations.Default);
+                orig(self, false);
+                return;
+            }
+
+            orig(self, additiveGateSearch);
+        }
+
+        IEnumerator CameraControl()
+        {
+            yield return new WaitWhile(() => !GameObject.Find("zombie10"));
             foreach (var i in FindObjectsOfType<GameObject>())
             {
-                if (i.name.Contains("block"))
+                Log(i.name);
+                if (i.name.Contains("bottom") || i.name.Contains("top") || i.name.Contains("overlay"))
                 {
-                    i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
+                    try
+                    {
+                        i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
+                    }
+                    catch (System.Exception e)
+                    {
+                        Log(e);
+                    }
                 }
-                else if (i.name.Contains("bg"))
+                if (i.name.Contains("zombie"))
                 {
-                    i.transform.SetPosition3D(i.transform.position.x, i.transform.position.y, 1f);
-                    i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
+                    try
+                    {
+                        i.AddComponent<ZombieControl>();
+                    }
+                    catch (System.Exception e)
+                    {
+                        Log(e);
+                    }
                 }
-                else if (i.name.Contains("PK"))
-                {
-                    i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
-                }
-                else if (i.name == "bg")
-                {
-                    i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
-                }
-            }
-            _rb = _target.GetComponent<Rigidbody2D>();
-            On.HeroController.CheckTouchingGround += HeroController_CheckTouchingGround;
-            On.HeroController.Jump += HeroController_Jump;
-            On.HeroController.JumpReleased += HeroController_JumpReleased;
-            On.HeroController.DoubleJump += HeroController_DoubleJump;
 
-            while (true)
+            }
+
+            yield return new WaitWhile(() => !GameCameras.instance);
+            while (sceneName == "zombie-scene")
             {
-                if (Input.GetKeyDown(KeyCode.R))
+                float tarX = _target.transform.position.x;
+                if (tarX < 57f)
                 {
-                    _target.spellControl.GetAction<SetVelocity2d>("Quake1 Down", 6).y.Value *= -1f;
-                    _target.spellControl.GetAction<SetVelocity2d>("Quake2 Down", 6).y.Value *= -1f;
-                    Physics2D.gravity = new Vector2(Physics2D.gravity.x, Physics2D.gravity.y * -1f);
-                    _target.transform.localScale = new Vector2(_target.transform.localScale.x, _target.transform.localScale.y * -1f);
+                    GameCameras.instance.mainCamera.transform.position = new Vector3(57f, 8.3f, -38.1f);
+                    GameCameras.instance.cameraController.SetMode(CameraController.CameraMode.FROZEN);
+                }
+                else if (tarX > 142f)
+                {
+                    GameCameras.instance.mainCamera.transform.position = new Vector3(142f, 8.3f,-38.1f);
+                    GameCameras.instance.cameraController.SetMode(CameraController.CameraMode.FROZEN);
+                }
+                else
+                {
+                    GameCameras.instance.cameraController.SetMode(CameraController.CameraMode.FOLLOWING);
                 }
                 yield return new WaitForEndOfFrame();
             }
         }
 
-        private void GameManager_BeginSceneTransition(On.GameManager.orig_BeginSceneTransition orig, GameManager self, GameManager.SceneLoadInfo info)
+        IEnumerator DoorControl()
         {
-            /*Log("---------------------------------");
-            Log(info.SceneName);
-            Log(info.EntryGateName);
-            Log(info.EntryDelay);
-            Log(info.Visualization);
-            Log(info.PreventCameraFadeOut);
-            Log(info.WaitForSceneTransitionCameraFade);
-            Log(info.AlwaysUnloadUnusedAssets);*/
-            if (info.SceneName== "GG_Workshop")
+            InputHandler ih = GameManager.instance.GetComponent<InputHandler>();
+            yield return new WaitWhile(() => HeroController.instance.transform.GetPositionX() < 144f || HeroController.instance.transform.GetPositionX() > 148f || !ih.inputActions.up.WasPressed);            tk2dSpriteAnimator anim = HeroController.instance.gameObject.GetComponent<tk2dSpriteAnimator>();
+            _target.RelinquishControl();
+            _target.StopAnimationControl();
+            anim.Play("Enter");
+            GameManager.instance.playerData.disablePause = true;
+            PlayMakerFSM pm = GameCameras.instance.tk2dCam.gameObject.LocateMyFSM("CameraFade");
+            pm.SendEvent("FADE OUT");
+            yield return new WaitForSeconds(0.5f);
+            GameManager.instance.BeginSceneTransition(new GameManager.SceneLoadInfo
             {
-                AssetBundle ab = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "texture"));
-                Object[] resources = ab.LoadAllAssets();
-                AssetBundle ab2 = AssetBundle.LoadFromFile(Path.Combine(Application.streamingAssetsPath, "scene"));
-                sceneName = ab2.GetAllScenePaths()[0];
-                Log("oof");
-                info.SceneName = sceneName;
-                //info.EntryGateName = "left1";
-                //info.EntryDelay = 0.2f;
-                //info.Visualization = GameManager.SceneLoadVisualizations.Dream;
-                //info.PreventCameraFadeOut = true;
-                //info.WaitForSceneTransitionCameraFade = true;
-                info.AlwaysUnloadUnusedAssets = false;
+                SceneName = "zombie-scene2",
+                EntryGateName = "left test3",
+                Visualization = GameManager.SceneLoadVisualizations.Default,
+                WaitForSceneTransitionCameraFade = false,
+                
+            });
+        }
+
+        IEnumerator CameraControl2() //18.5f
+        {
+            yield return new WaitWhile(() => !GameObject.Find("top2"));
+            foreach (var i in FindObjectsOfType<CameraLockArea>())
+            {
+                Log("SSASA " + i.name);
+                GameCameras.instance.cameraController.ReleaseLock(i);
             }
-            orig(self, info);
-            //StartCoroutine(WaitForHero());
-        }
-
-        void LateUpdate()
-        {
-            if (_rb.velocity.y > _target.MAX_FALL_VELOCITY && !_target.inAcid && !_target.controlReqlinquished && !_target.cState.shadowDashing && !_target.cState.spellQuake)
+            foreach (var i in FindObjectsOfType<GameObject>())
             {
-                _rb.velocity = new Vector2(_rb.velocity.x, _target.MAX_FALL_VELOCITY);
-            }
-        }
-
-        private bool CheckTouchingGround(HeroController self)
-        {
-            Collider2D col2d = self.GetComponent<Collider2D>();
-            Vector2 vector = new Vector2(col2d.bounds.min.x, col2d.bounds.center.y);
-            Vector2 vector2 = col2d.bounds.center;
-            Vector2 vector3 = new Vector2(col2d.bounds.max.x, col2d.bounds.center.y);
-            float distance = col2d.bounds.extents.y + 0.16f;
-            UnityEngine.Debug.DrawRay(vector, Vector2.down, Color.yellow);
-            UnityEngine.Debug.DrawRay(vector2, Vector2.down, Color.yellow);
-            UnityEngine.Debug.DrawRay(vector3, Vector2.down, Color.yellow);
-            RaycastHit2D raycastHit2D = Physics2D.Raycast(vector, Vector2.up, distance, 256);
-            RaycastHit2D raycastHit2D2 = Physics2D.Raycast(vector2, Vector2.up, distance, 256);
-            RaycastHit2D raycastHit2D3 = Physics2D.Raycast(vector3, Vector2.up, distance, 256);
-            return raycastHit2D.collider != null || raycastHit2D2.collider != null || raycastHit2D3.collider != null; 
-        }
-
-        private void HeroController_JumpReleased(On.HeroController.orig_JumpReleased orig, HeroController self)
-        {
-            if (Physics2D.gravity.y > 0f)
-            {
-                int jumped_steps = Modding.ReflectionHelper.GetAttr<HeroController, int>(self, "jumped_steps");
-                if (_rb.velocity.y < 0f && jumped_steps >= _target.JUMP_STEPS_MIN && !_target.inAcid && !_target.cState.shroomBouncing)
+                Log(i.name);
+                if (i.name.Contains("bottom2") || i.name.Contains("top2") || i.name.Contains("overlay2") || i.name.Contains("plat"))
                 {
-                    bool jumpReleaseQueueingEnabled = Modding.ReflectionHelper.GetAttr<HeroController, bool>(self, "jumpReleaseQueueingEnabled");
-                    bool jumpReleaseQueuing = Modding.ReflectionHelper.GetAttr<HeroController, bool>(self, "jumpReleaseQueuing");
-                    int jumpReleaseQueueSteps = Modding.ReflectionHelper.GetAttr<HeroController, int>(self, "jumpReleaseQueueSteps");
-                    if (jumpReleaseQueueingEnabled)
+                    try
                     {
-                        if (jumpReleaseQueuing && jumpReleaseQueueSteps <= 0)
-                        {
-                            _rb.velocity = new Vector2(_rb.velocity.x, 0f);
-                            self.cState.jumping = false;
-                            Modding.ReflectionHelper.SetAttr(self, "jumpReleaseQueuing", false);
-                            Modding.ReflectionHelper.SetAttr(self, "jump_steps", 0);
-                        }
+                        i.GetComponent<SpriteRenderer>().material = new Material(Shader.Find("Sprites/Default"));
                     }
-                    else
+                    catch (System.Exception e)
                     {
-                        _rb.velocity = new Vector2(_rb.velocity.x, 0f);
-                        self.cState.jumping = false;
-                        Modding.ReflectionHelper.SetAttr(self, "jumpReleaseQueuing", false);
-                        Modding.ReflectionHelper.SetAttr(self, "jump_steps", 0);
+                        Log(e);
                     }
                 }
-                Modding.ReflectionHelper.SetAttr(self, "jumpQueuing", false);
-                Modding.ReflectionHelper.SetAttr(self, "doubleJumpQueuing", false);
-                if (_target.cState.swimming)
+                if (i.name.Contains("zombie"))
                 {
-                    _target.cState.swimming = false;
+                    try
+                    {
+                        i.AddComponent<ZombieControl>();
+                    }
+                    catch (System.Exception e)
+                    {
+                        Log(e);
+                    }
                 }
             }
-            else
-            {
-                orig(self);
-            }
-        }
 
-        private void HeroController_DoubleJump(On.HeroController.orig_DoubleJump orig, HeroController self)
-        {
-            if (Physics2D.gravity.y > 0f)
+            yield return new WaitWhile(() => !GameCameras.instance);
+            while (sceneName == "zombie-scene2")
             {
-                int doubleJump_steps = Modding.ReflectionHelper.GetAttr<HeroController, int>(_target, "doubleJump_steps");
-                if (doubleJump_steps <= _target.DOUBLE_JUMP_STEPS)
+                float tarX = _target.transform.position.x;
+                if (tarX < 103.4f)
                 {
-                    if (doubleJump_steps > 3)
-                    {
-                        _rb.velocity = new Vector2(_rb.velocity.x, _target.JUMP_SPEED * -1.1f);
-                    }
-                    Modding.ReflectionHelper.SetAttr(_target, "doubleJump_steps", doubleJump_steps + 1);
+                    GameCameras.instance.mainCamera.transform.position = new Vector3(103.4f, 8.3f, -38.1f);
+                    GameCameras.instance.cameraController.SetMode(CameraController.CameraMode.FROZEN);
                 }
                 else
                 {
-                    _target.cState.doubleJumping = false;
-                    Modding.ReflectionHelper.SetAttr(_target, "doubleJump_steps", 0);
+                    GameCameras.instance.cameraController.SetMode(CameraController.CameraMode.FOLLOWING);
                 }
-                if (_target.cState.onGround)
-                {
-                    _target.cState.doubleJumping = false;
-                    Modding.ReflectionHelper.SetAttr(_target, "doubleJump_steps", 0);
-                }
+                yield return new WaitForEndOfFrame();
             }
-            else
-            {
-                orig(self);
-            }
-        }
-
-        private void HeroController_Jump(On.HeroController.orig_Jump orig, HeroController self)
-        {
-            if (Physics2D.gravity.y > 0f)
-            {
-                int jump_steps = Modding.ReflectionHelper.GetAttr<HeroController, int>(self, "jump_steps");
-                int jumped_steps = Modding.ReflectionHelper.GetAttr<HeroController, int>(self, "jumped_steps");
-                if (jump_steps <= self.JUMP_STEPS)
-                {
-                    if (self.inAcid)
-                    {
-                        _rb.velocity = new Vector2(_rb.velocity.x, -1f * self.JUMP_SPEED_UNDERWATER);
-                    }
-                    else
-                    {
-                        _rb.velocity = new Vector2(_rb.velocity.x, -1f * self.JUMP_SPEED);
-                    }
-                    Modding.ReflectionHelper.SetAttr(self, "jump_steps", jump_steps + 1);
-                    Modding.ReflectionHelper.SetAttr(self, "jumped_steps", jumped_steps + 1);
-                    Modding.ReflectionHelper.SetAttr(self, "ledgeBufferSteps", 0);
-                }
-                else
-                {
-                    self.cState.jumping = false;
-                    Modding.ReflectionHelper.SetAttr(self, "jumpReleaseQueuing", false);
-                    Modding.ReflectionHelper.SetAttr(self, "jump_steps", 0);
-                }
-
-            }
-            else
-            {
-                orig(self);
-            }
-        }
-
-        private bool HeroController_CheckTouchingGround(On.HeroController.orig_CheckTouchingGround orig, HeroController self)
-        {
-            if (Physics2D.gravity.y > 0f)
-            {
-                return CheckTouchingGround(self);
-            }
-            return orig(self);
         }
 
         public static void Log(object o)

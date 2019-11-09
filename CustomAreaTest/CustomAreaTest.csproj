@@ -91,10 +91,13 @@
     </Reference>
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="AnimatorExtensions.cs" />
     <Compile Include="CustomAreaTest.cs" />
+    <Compile Include="MusicControl.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="SceneLoader.cs" />
-    <Compile Include="AnimControl.cs" />
+    <Compile Include="ZombieControl.cs" />
+    <Compile Include="ZombieDeath.cs" />
   </ItemGroup>
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
     <Exec Command="@echo on" />
